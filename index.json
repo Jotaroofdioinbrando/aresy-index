@@ -1,3 +1,4 @@
 {
+  "aresTorch": "packages/aresTorch/aresTorch.ay",
   "numAres": "packages/numAres/numAres.ay"
 }

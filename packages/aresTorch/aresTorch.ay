@@ -1,0 +1,710 @@
+// ============================================================
+// aresTorch 0.1
+// Computação numérica e redes neurais para aresY
+//
+// Biblioteca de arquivo único.
+// Não possui fn main().
+//
+// Compatível com a ideia do aresy-index:
+// packages/aresTorch/aresTorch.ay
+// ============================================================
+
+
+// ============================================================
+// UTILIDADES
+// ============================================================
+
+fn clamp(x: double, lo: double, hi: double) -> double {
+    if x < lo {
+        return lo
+    }
+
+    if x > hi {
+        return hi
+    }
+
+    return x
+}
+
+fn lerp(a: double, b: double, t: double) -> double {
+    return a + (b - a) * t
+}
+
+fn sign(x: double) -> double {
+    if x > 0.0 {
+        return 1.0
+    }
+
+    if x < 0.0 {
+        return -1.0
+    }
+
+    return 0.0
+}
+
+
+// ============================================================
+// ATIVAÇÕES
+// ============================================================
+
+fn relu(x: double) -> double {
+    if x > 0.0 {
+        return x
+    }
+
+    return 0.0
+}
+
+fn relu_grad(x: double) -> double {
+    if x > 0.0 {
+        return 1.0
+    }
+
+    return 0.0
+}
+
+fn sigmoid(x: double) -> double {
+    if x >= 0.0 {
+        return 1.0 / (1.0 + exp(-x))
+    }
+
+    var e = exp(x)
+    return e / (1.0 + e)
+}
+
+fn sigmoid_grad(x: double) -> double {
+    var s = sigmoid(x)
+    return s * (1.0 - s)
+}
+
+fn tanh_act(x: double) -> double {
+    var e = exp(2.0 * x)
+    return (e - 1.0) / (e + 1.0)
+}
+
+fn tanh_grad(x: double) -> double {
+    var t = tanh_act(x)
+    return 1.0 - t * t
+}
+
+fn step(x: double) -> double {
+    if x >= 0.0 {
+        return 1.0
+    }
+
+    return 0.0
+}
+
+
+// ============================================================
+// SOFTMAX
+// ============================================================
+
+fn softmax2(a: double, b: double) -> double {
+    var ma = max(a, b)
+
+    var ea = exp(a - ma)
+    var eb = exp(b - ma)
+
+    return ea / (ea + eb)
+}
+
+fn softmax2_b(a: double, b: double) -> double {
+    var ma = max(a, b)
+
+    var ea = exp(a - ma)
+    var eb = exp(b - ma)
+
+    return eb / (ea + eb)
+}
+
+
+// ============================================================
+// PERDAS
+// ============================================================
+
+fn mse(pred: double, target: double) -> double {
+    var d = pred - target
+    return d * d
+}
+
+fn mse_grad(pred: double, target: double) -> double {
+    return 2.0 * (pred - target)
+}
+
+fn mae(pred: double, target: double) -> double {
+    return abs(pred - target)
+}
+
+fn mae_grad(pred: double, target: double) -> double {
+    return sign(pred - target)
+}
+
+fn binary_cross_entropy(pred: double, target: double) -> double {
+    var p = clamp(pred, 0.000000001, 0.999999999)
+
+    return -(target * log(p) +
+             (1.0 - target) * log(1.0 - p))
+}
+
+fn binary_cross_entropy_grad(
+    pred: double,
+    target: double
+) -> double {
+    var p = clamp(pred, 0.000000001, 0.999999999)
+
+    return (p - target) / (p * (1.0 - p))
+}
+
+
+// ============================================================
+// VETORES
+// ============================================================
+
+fn dot2(
+    a1: double,
+    a2: double,
+    b1: double,
+    b2: double
+) -> double {
+    return a1 * b1 + a2 * b2
+}
+
+fn dot3(
+    a1: double,
+    a2: double,
+    a3: double,
+    b1: double,
+    b2: double,
+    b3: double
+) -> double {
+    return a1 * b1 +
+           a2 * b2 +
+           a3 * b3
+}
+
+fn dot4(
+    a1: double,
+    a2: double,
+    a3: double,
+    a4: double,
+    b1: double,
+    b2: double,
+    b3: double,
+    b4: double
+) -> double {
+    return a1 * b1 +
+           a2 * b2 +
+           a3 * b3 +
+           a4 * b4
+}
+
+fn vector_norm2(a: double, b: double) -> double {
+    return sqrt(a * a + b * b)
+}
+
+fn vector_norm3(
+    a: double,
+    b: double,
+    c: double
+) -> double {
+    return sqrt(a * a + b * b + c * c)
+}
+
+
+// ============================================================
+// MATRIZES 2x2
+// ============================================================
+
+fn mat2_det(
+    a11: double,
+    a12: double,
+    a21: double,
+    a22: double
+) -> double {
+    return a11 * a22 - a12 * a21
+}
+
+fn mat2_trace(
+    a11: double,
+    a12: double,
+    a21: double,
+    a22: double
+) -> double {
+    return a11 + a22
+}
+
+fn mat2_mul_11(
+    a11: double, a12: double,
+    b11: double, b21: double
+) -> double {
+    return a11 * b11 + a12 * b21
+}
+
+fn mat2_mul_12(
+    a11: double, a12: double,
+    b12: double, b22: double
+) -> double {
+    return a11 * b12 + a12 * b22
+}
+
+fn mat2_mul_21(
+    a21: double, a22: double,
+    b11: double, b21: double
+) -> double {
+    return a21 * b11 + a22 * b21
+}
+
+fn mat2_mul_22(
+    a21: double, a22: double,
+    b12: double, b22: double
+) -> double {
+    return a21 * b12 + a22 * b22
+}
+
+
+// ============================================================
+// INICIALIZAÇÃO DE PESOS
+// ============================================================
+
+fn random_weight() -> double {
+    return (random(20001) - 10000) / 10000.0
+}
+
+fn random_positive() -> double {
+    return random(10001) / 10000.0
+}
+
+fn random_signed(scale: double) -> double {
+    return random_weight() * scale
+}
+
+// Aproximação simples de inicialização Xavier.
+fn xavier(fan_in: double, fan_out: double) -> double {
+    var limit = sqrt(6.0 / (fan_in + fan_out))
+    return random_signed(limit)
+}
+
+// Aproximação simples de inicialização He.
+fn he(fan_in: double) -> double {
+    var scale = sqrt(2.0 / fan_in)
+    return random_signed(scale)
+}
+
+
+// ============================================================
+// NEURÔNIO
+// ============================================================
+
+fn neuron2(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    bias: double
+) -> double {
+    return x1 * w1 +
+           x2 * w2 +
+           bias
+}
+
+fn neuron2_relu(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    bias: double
+) -> double {
+    return relu(
+        neuron2(x1, x2, w1, w2, bias)
+    )
+}
+
+fn neuron2_sigmoid(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    bias: double
+) -> double {
+    return sigmoid(
+        neuron2(x1, x2, w1, w2, bias)
+    )
+}
+
+fn neuron2_tanh(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    bias: double
+) -> double {
+    return tanh_act(
+        neuron2(x1, x2, w1, w2, bias)
+    )
+}
+
+
+// ============================================================
+// CAMADA DENSAMENTE CONECTADA 2 -> 4
+// ============================================================
+
+fn dense2x4_1(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    b: double
+) -> double {
+    return neuron2(x1, x2, w1, w2, b)
+}
+
+fn dense2x4_2(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    b: double
+) -> double {
+    return neuron2(x1, x2, w1, w2, b)
+}
+
+fn dense2x4_3(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    b: double
+) -> double {
+    return neuron2(x1, x2, w1, w2, b)
+}
+
+fn dense2x4_4(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    b: double
+) -> double {
+    return neuron2(x1, x2, w1, w2, b)
+}
+
+
+// ============================================================
+// MLP 2 -> 4 -> 2
+// ============================================================
+
+fn mlp_2_4_2(
+    x1: double,
+    x2: double,
+
+    w11: double, w12: double, b1: double,
+    w21: double, w22: double, b2: double,
+    w31: double, w32: double, b3: double,
+    w41: double, w42: double, b4: double,
+
+    o11: double, o12: double,
+    o13: double, o14: double,
+    ob1: double,
+
+    o21: double, o22: double,
+    o23: double, o24: double,
+    ob2: double
+) -> double {
+
+    var h1 = tanh_act(
+        neuron2(x1, x2, w11, w12, b1)
+    )
+
+    var h2 = tanh_act(
+        neuron2(x1, x2, w21, w22, b2)
+    )
+
+    var h3 = tanh_act(
+        neuron2(x1, x2, w31, w32, b3)
+    )
+
+    var h4 = tanh_act(
+        neuron2(x1, x2, w41, w42, b4)
+    )
+
+    var o1 = tanh_act(
+        h1 * o11 +
+        h2 * o12 +
+        h3 * o13 +
+        h4 * o14 +
+        ob1
+    )
+
+    var o2 = tanh_act(
+        h1 * o21 +
+        h2 * o22 +
+        h3 * o23 +
+        h4 * o24 +
+        ob2
+    )
+
+    return o1 + o2
+}
+
+
+// ============================================================
+// PERCEPTRON
+// ============================================================
+
+fn perceptron2(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    bias: double
+) -> double {
+    return step(
+        x1 * w1 +
+        x2 * w2 +
+        bias
+    )
+}
+
+fn perceptron_error(
+    prediction: double,
+    target: double
+) -> double {
+    return target - prediction
+}
+
+
+// ============================================================
+// GRADIENT DESCENT
+// ============================================================
+
+fn gradient_step(
+    parameter: double,
+    gradient: double,
+    learning_rate: double
+) -> double {
+    return parameter -
+           learning_rate * gradient
+}
+
+fn sgd_weight(
+    weight: double,
+    gradient: double,
+    learning_rate: double
+) -> double {
+    return gradient_step(
+        weight,
+        gradient,
+        learning_rate
+    )
+}
+
+
+// ============================================================
+// NORMALIZAÇÃO
+// ============================================================
+
+fn normalize_minmax(
+    x: double,
+    minimum: double,
+    maximum: double
+) -> double {
+    if maximum == minimum {
+        return 0.0
+    }
+
+    return (x - minimum) /
+           (maximum - minimum)
+}
+
+fn standardize(
+    x: double,
+    mean_value: double,
+    std_value: double
+) -> double {
+    if std_value == 0.0 {
+        return 0.0
+    }
+
+    return (x - mean_value) / std_value
+}
+
+
+// ============================================================
+// MÉTRICAS
+// ============================================================
+
+fn accuracy_binary(
+    prediction: double,
+    target: double
+) -> double {
+    var p = step(prediction)
+
+    if p == target {
+        return 1.0
+    }
+
+    return 0.0
+}
+
+fn classification_error(
+    prediction: double,
+    target: double
+) -> double {
+    return 1.0 -
+           accuracy_binary(prediction, target)
+}
+
+
+// ============================================================
+// REGRESSÃO
+// ============================================================
+
+fn linear(
+    x: double,
+    weight: double,
+    bias: double
+) -> double {
+    return x * weight + bias
+}
+
+fn linear2(
+    x1: double,
+    x2: double,
+    w1: double,
+    w2: double,
+    bias: double
+) -> double {
+    return x1 * w1 +
+           x2 * w2 +
+           bias
+}
+
+
+// ============================================================
+// TREINO DE UM PERCEPTRON
+// ============================================================
+
+fn perceptron_update_weight(
+    weight: double,
+    x: double,
+    error: double,
+    learning_rate: double
+) -> double {
+    return weight +
+           learning_rate *
+           error *
+           x
+}
+
+fn perceptron_update_bias(
+    bias: double,
+    error: double,
+    learning_rate: double
+) -> double {
+    return bias +
+           learning_rate *
+           error
+}
+
+
+// ============================================================
+// UTILIDADES PARA TREINAMENTO
+// ============================================================
+
+fn learning_rate_decay(
+    initial_rate: double,
+    epoch: double,
+    decay: double
+) -> double {
+    return initial_rate /
+           (1.0 + decay * epoch)
+}
+
+fn exponential_decay(
+    initial_rate: double,
+    epoch: double,
+    decay: double
+) -> double {
+    return initial_rate *
+           exp(-decay * epoch)
+}
+
+
+// ============================================================
+// DROPOUT SIMPLIFICADO
+// ============================================================
+
+fn dropout_value(
+    x: double,
+    keep_probability: double
+) -> double {
+    var r = random_positive()
+
+    if r < keep_probability {
+        return x / keep_probability
+    }
+
+    return 0.0
+}
+
+
+// ============================================================
+// FUNÇÕES DE PERDA PARA CLASSIFICAÇÃO
+// ============================================================
+
+fn hinge_loss(
+    prediction: double,
+    target: double
+) -> double {
+    var v = 1.0 - target * prediction
+
+    if v > 0.0 {
+        return v
+    }
+
+    return 0.0
+}
+
+fn l1_regularization(
+    weight: double,
+    lambda: double
+) -> double {
+    return lambda * abs(weight)
+}
+
+fn l2_regularization(
+    weight: double,
+    lambda: double
+) -> double {
+    return lambda * weight * weight
+}
+
+
+// ============================================================
+// FUNÇÕES DE TESTE / SANIDADE
+// ============================================================
+
+fn is_finite_approx(x: double) -> double {
+    // Valores absurdamente grandes são tratados como inválidos.
+    if x > 1e100 {
+        return 0.0
+    }
+
+    if x < -1e100 {
+        return 0.0
+    }
+
+    return 1.0
+}
+
+fn safe_div(
+    a: double,
+    b: double
+) -> double {
+    if b == 0.0 {
+        return 0.0
+    }
+
+    return a / b
+}
