@@ -1,0 +1,749 @@
+// aresNeuro — biblioteca de simulação neural para aresY.
+//
+// Mantém a API curta e neutra em nome, sem referência ao Brian2.
+// Modelos incluídos:
+// - LIF discreto com sinapses densas
+// - Hodgkin-Huxley clássico discreto
+// - monitor de estado e spikes
+//
+// Sem dependências externas. Usa apenas nativos do compilador:
+// - darray(n)
+// - dmat(r, c)
+
+struct AresLifGroup {
+    n: i64,
+    v: double[],
+    input: double[],
+    spikes: double[],
+    refractory: double[],
+    v_rest: double,
+    v_reset: double,
+    v_thresh: double,
+    tau_m: double,
+    tau_ref: double,
+    dt: double
+}
+
+struct AresHhGroup {
+    n: i64,
+    v: double[],
+    m: double[],
+    h: double[],
+    n_gate: double[],
+    input: double[],
+    spikes: double[],
+    c_m: double,
+    g_na: double,
+    g_k: double,
+    g_l: double,
+    e_na: double,
+    e_k: double,
+    e_l: double,
+    dt: double,
+    spike_thresh: double
+}
+
+struct AresSynapses {
+    pre_n: i64,
+    post_n: i64,
+    w: double[][]
+}
+
+struct AresMonitor {
+    steps: i64,
+    n: i64,
+    v: double[][],
+    spikes: double[][],
+    t: i64
+}
+
+struct AresTimedArray {
+    steps: i64,
+    n: i64,
+    values: double[][],
+    dt: double
+}
+
+struct AresPoissonGroup {
+    n: i64,
+    rates: double[],
+    spikes: double[],
+    dt: double
+}
+
+struct AresCondSynapses {
+    pre_n: i64,
+    post_n: i64,
+    g: double[][],
+    tau: double,
+    e_rev: double
+}
+
+fn _ares_fill_vec(x: double[], n: i64, value: double) {
+    var i = 0
+    while i < n {
+        x[i] = value
+        i = i + 1
+    }
+}
+
+fn _ares_alloc_lif_vec(n: i64, value: double) -> double[] {
+    var x = darray(n)
+    _ares_fill_vec(x, n, value)
+    return x
+}
+
+fn ares_lif_group(n: i64, v_rest: double, v_reset: double, v_thresh: double, tau_m: double, tau_ref: double, dt: double) -> AresLifGroup {
+    var g = AresLifGroup {
+        n: n,
+        v: _ares_alloc_lif_vec(n, v_reset),
+        input: _ares_alloc_lif_vec(n, 0.0),
+        spikes: _ares_alloc_lif_vec(n, 0.0),
+        refractory: _ares_alloc_lif_vec(n, 0.0),
+        v_rest: v_rest,
+        v_reset: v_reset,
+        v_thresh: v_thresh,
+        tau_m: tau_m,
+        tau_ref: tau_ref,
+        dt: dt
+    }
+    return g
+}
+
+fn NeuronGroup(n: i64, v_rest: double, v_reset: double, v_thresh: double, tau_m: double, tau_ref: double, dt: double) -> AresLifGroup {
+    return ares_lif_group(n, v_rest, v_reset, v_thresh, tau_m, tau_ref, dt)
+}
+
+fn StateMonitor(steps: i64, n: i64) -> AresMonitor {
+    return ares_monitor(steps, n)
+}
+
+fn SpikeMonitor(steps: i64, n: i64) -> AresMonitor {
+    return ares_monitor(steps, n)
+}
+
+fn ares_lif_reset(g: AresLifGroup) {
+    var i = 0
+    while i < g.n {
+        g.v[i] = g.v_reset
+        g.input[i] = 0.0
+        g.spikes[i] = 0.0
+        g.refractory[i] = 0.0
+        i = i + 1
+    }
+}
+
+fn ares_drive(g: AresLifGroup, idx: i64, current: double) {
+    if idx < 0 { throw "ares_drive: indice negativo" }
+    if idx >= g.n { throw "ares_drive: indice fora dos limites" }
+    g.input[idx] = g.input[idx] + current
+}
+
+fn ares_drive_all(g: AresLifGroup, current: double) {
+    var i = 0
+    while i < g.n {
+        g.input[i] = g.input[i] + current
+        i = i + 1
+    }
+}
+
+fn ares_lif_voltage(g: AresLifGroup, idx: i64) -> double {
+    if idx < 0 { throw "ares_lif_voltage: indice negativo" }
+    if idx >= g.n { throw "ares_lif_voltage: indice fora dos limites" }
+    return g.v[idx]
+}
+
+fn ares_lif_spike(g: AresLifGroup, idx: i64) -> double {
+    if idx < 0 { throw "ares_lif_spike: indice negativo" }
+    if idx >= g.n { throw "ares_lif_spike: indice fora dos limites" }
+    return g.spikes[idx]
+}
+
+fn ares_lif_step(g: AresLifGroup) {
+    var i = 0
+    while i < g.n {
+        if g.refractory[i] > 0.0 {
+            g.refractory[i] = g.refractory[i] - g.dt
+            if g.refractory[i] < 0.0 {
+                g.refractory[i] = 0.0
+            }
+            g.v[i] = g.v_reset
+            g.spikes[i] = 0.0
+        } else {
+            var dv = ((g.v_rest - g.v[i]) + g.input[i]) / g.tau_m
+            dv = dv * g.dt
+            g.v[i] = g.v[i] + dv
+            if g.v[i] >= g.v_thresh {
+                g.spikes[i] = 1.0
+                g.v[i] = g.v_reset
+                g.refractory[i] = g.tau_ref
+            } else {
+                g.spikes[i] = 0.0
+            }
+        }
+        g.input[i] = 0.0
+        i = i + 1
+    }
+}
+
+fn ares_lif_spike_count(g: AresLifGroup) -> double {
+    var s = 0.0
+    var i = 0
+    while i < g.n {
+        s = s + g.spikes[i]
+        i = i + 1
+    }
+    return s
+}
+
+fn ares_hh_group(n: i64, c_m: double, g_na: double, g_k: double, g_l: double, e_na: double, e_k: double, e_l: double, dt: double) -> AresHhGroup {
+    var v = _ares_alloc_lif_vec(n, -65.0)
+    var m = _ares_alloc_lif_vec(n, 0.0529)
+    var h = _ares_alloc_lif_vec(n, 0.596)
+    var n_gate = _ares_alloc_lif_vec(n, 0.3177)
+    var input = _ares_alloc_lif_vec(n, 0.0)
+    var spikes = _ares_alloc_lif_vec(n, 0.0)
+    return AresHhGroup {
+        n: n,
+        v: v,
+        m: m,
+        h: h,
+        n_gate: n_gate,
+        input: input,
+        spikes: spikes,
+        c_m: c_m,
+        g_na: g_na,
+        g_k: g_k,
+        g_l: g_l,
+        e_na: e_na,
+        e_k: e_k,
+        e_l: e_l,
+        dt: dt,
+        spike_thresh: 0.0
+    }
+}
+
+fn HodgkinHuxleyGroup(n: i64, c_m: double, g_na: double, g_k: double, g_l: double, e_na: double, e_k: double, e_l: double, dt: double) -> AresHhGroup {
+    return ares_hh_group(n, c_m, g_na, g_k, g_l, e_na, e_k, e_l, dt)
+}
+
+fn ares_hh_reset(g: AresHhGroup) {
+    var i = 0
+    while i < g.n {
+        g.v[i] = -65.0
+        g.m[i] = 0.0529
+        g.h[i] = 0.596
+        g.n_gate[i] = 0.3177
+        g.input[i] = 0.0
+        g.spikes[i] = 0.0
+        i = i + 1
+    }
+}
+
+fn ares_hh_drive(g: AresHhGroup, idx: i64, current: double) {
+    if idx < 0 { throw "ares_hh_drive: indice negativo" }
+    if idx >= g.n { throw "ares_hh_drive: indice fora dos limites" }
+    g.input[idx] = g.input[idx] + current
+}
+
+fn ares_hh_drive_all(g: AresHhGroup, current: double) {
+    var i = 0
+    while i < g.n {
+        g.input[i] = g.input[i] + current
+        i = i + 1
+    }
+}
+
+fn ares_hh_voltage(g: AresHhGroup, idx: i64) -> double {
+    if idx < 0 { throw "ares_hh_voltage: indice negativo" }
+    if idx >= g.n { throw "ares_hh_voltage: indice fora dos limites" }
+    return g.v[idx]
+}
+
+fn ares_hh_spike(g: AresHhGroup, idx: i64) -> double {
+    if idx < 0 { throw "ares_hh_spike: indice negativo" }
+    if idx >= g.n { throw "ares_hh_spike: indice fora dos limites" }
+    return g.spikes[idx]
+}
+
+fn _ares_hh_alpha_n(v: double) -> double {
+    var x = v + 55.0
+    if x == 0.0 {
+        return 0.1
+    }
+    return (0.01 * x) / (1.0 - exp(-x / 10.0))
+}
+
+fn _ares_hh_beta_n(v: double) -> double {
+    return 0.125 * exp(-(v + 65.0) / 80.0)
+}
+
+fn _ares_hh_alpha_m(v: double) -> double {
+    var x = v + 40.0
+    if x == 0.0 {
+        return 1.0
+    }
+    return (0.1 * x) / (1.0 - exp(-x / 10.0))
+}
+
+fn _ares_hh_beta_m(v: double) -> double {
+    return 4.0 * exp(-(v + 65.0) / 18.0)
+}
+
+fn _ares_hh_alpha_h(v: double) -> double {
+    return 0.07 * exp(-(v + 65.0) / 20.0)
+}
+
+fn _ares_hh_beta_h(v: double) -> double {
+    return 1.0 / (1.0 + exp(-(v + 35.0) / 10.0))
+}
+
+fn ares_hh_step(g: AresHhGroup) {
+    var i = 0
+    while i < g.n {
+        var v = g.v[i]
+        var m = g.m[i]
+        var h = g.h[i]
+        var n_gate = g.n_gate[i]
+
+        var an = _ares_hh_alpha_n(v)
+        var bn = _ares_hh_beta_n(v)
+        var am = _ares_hh_alpha_m(v)
+        var bm = _ares_hh_beta_m(v)
+        var ah = _ares_hh_alpha_h(v)
+        var bh = _ares_hh_beta_h(v)
+
+        n_gate = n_gate + g.dt * (an * (1.0 - n_gate) - bn * n_gate)
+        m = m + g.dt * (am * (1.0 - m) - bm * m)
+        h = h + g.dt * (ah * (1.0 - h) - bh * h)
+
+        var gna = g.g_na * m * m * m * h
+        var gk = g.g_k * n_gate * n_gate * n_gate * n_gate
+        var ina = gna * (v - g.e_na)
+        var ik = gk * (v - g.e_k)
+        var il = g.g_l * (v - g.e_l)
+        var dv = (g.input[i] - ina - ik - il) / g.c_m
+        dv = dv * g.dt
+        v = v + dv
+
+        g.v[i] = v
+        g.m[i] = m
+        g.h[i] = h
+        g.n_gate[i] = n_gate
+        g.spikes[i] = 0.0
+        if v >= g.spike_thresh {
+            g.spikes[i] = 1.0
+        }
+        g.input[i] = 0.0
+        i = i + 1
+    }
+}
+
+fn ares_hh_spike_count(g: AresHhGroup) -> double {
+    var s = 0.0
+    var i = 0
+    while i < g.n {
+        s = s + g.spikes[i]
+        i = i + 1
+    }
+    return s
+}
+
+fn ares_hh_set_state(g: AresHhGroup, idx: i64, v: double, m: double, h: double, n_gate: double) {
+    if idx < 0 { throw "ares_hh_set_state: indice negativo" }
+    if idx >= g.n { throw "ares_hh_set_state: indice fora dos limites" }
+    g.v[idx] = v
+    g.m[idx] = m
+    g.h[idx] = h
+    g.n_gate[idx] = n_gate
+}
+
+fn ares_timed_array(values: double[][], dt: double) -> AresTimedArray {
+    var steps = len(values)
+    var n = 0
+    if steps > 0 {
+        n = len(values[0])
+    }
+    return AresTimedArray {
+        steps: steps,
+        n: n,
+        values: values,
+        dt: dt
+    }
+}
+
+fn TimedArray(values: double[][], dt: double) -> AresTimedArray {
+    return ares_timed_array(values, dt)
+}
+
+fn ares_timed_array_from_shape(steps: i64, n: i64, dt: double) -> AresTimedArray {
+    return AresTimedArray {
+        steps: steps,
+        n: n,
+        values: dmat(steps, n),
+        dt: dt
+    }
+}
+
+fn ares_timed_array_steps(ta: AresTimedArray) -> i64 {
+    return ta.steps
+}
+
+fn ares_timed_array_n(ta: AresTimedArray) -> i64 {
+    return ta.n
+}
+
+fn ares_timed_array_dt(ta: AresTimedArray) -> double {
+    return ta.dt
+}
+
+fn ares_timed_array_set(ta: AresTimedArray, step: i64, idx: i64, value: double) {
+    if step < 0 { throw "ares_timed_array_set: step negativo" }
+    if idx < 0 { throw "ares_timed_array_set: indice negativo" }
+    if step >= ta.steps { throw "ares_timed_array_set: step fora dos limites" }
+    if idx >= ta.n { throw "ares_timed_array_set: indice fora dos limites" }
+    ta.values[step][idx] = value
+}
+
+fn ares_timed_array_get(ta: AresTimedArray, step: i64, idx: i64) -> double {
+    if step < 0 { throw "ares_timed_array_get: step negativo" }
+    if idx < 0 { throw "ares_timed_array_get: indice negativo" }
+    if step >= ta.steps { throw "ares_timed_array_get: step fora dos limites" }
+    if idx >= ta.n { throw "ares_timed_array_get: indice fora dos limites" }
+    return ta.values[step][idx]
+}
+
+fn ares_timed_array_at(ta: AresTimedArray, step: i64, idx: i64) -> double {
+    return ares_timed_array_get(ta, step, idx)
+}
+
+fn ares_poisson_group(n: i64, rate: double, dt: double) -> AresPoissonGroup {
+    var rates = _ares_alloc_lif_vec(n, rate)
+    var spikes = _ares_alloc_lif_vec(n, 0.0)
+    return AresPoissonGroup {
+        n: n,
+        rates: rates,
+        spikes: spikes,
+        dt: dt
+    }
+}
+
+fn ares_poisson_group_rates(n: i64, rates: double[], dt: double) -> AresPoissonGroup {
+    if n < 1 {
+        throw "ares_poisson_group_rates: n precisa ser >= 1"
+    }
+    if len(rates) != n {
+        throw "ares_poisson_group_rates: rates nao bate com n"
+    }
+    var spikes = _ares_alloc_lif_vec(n, 0.0)
+    return AresPoissonGroup {
+        n: n,
+        rates: rates,
+        spikes: spikes,
+        dt: dt
+    }
+}
+
+fn PoissonGroup(n: i64, rate: double, dt: double) -> AresPoissonGroup {
+    return ares_poisson_group(n, rate, dt)
+}
+
+fn PoissonGroupRates(n: i64, rates: double[], dt: double) -> AresPoissonGroup {
+    return ares_poisson_group_rates(n, rates, dt)
+}
+
+fn ares_poisson_set_rate(g: AresPoissonGroup, idx: i64, rate: double) {
+    if idx < 0 { throw "ares_poisson_set_rate: indice negativo" }
+    if idx >= g.n { throw "ares_poisson_set_rate: indice fora dos limites" }
+    g.rates[idx] = rate
+}
+
+fn ares_poisson_step(g: AresPoissonGroup) {
+    var i = 0
+    while i < g.n {
+        var p = g.rates[i] * g.dt
+        if p <= 0.0 {
+            g.spikes[i] = 0.0
+        } else {
+            if p >= 1.0 {
+                g.spikes[i] = 1.0
+            } else {
+                var r = random(1000000)
+                if r < p * 1000000.0 {
+                    g.spikes[i] = 1.0
+                } else {
+                    g.spikes[i] = 0.0
+                }
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn ares_poisson_spike_count(g: AresPoissonGroup) -> double {
+    var s = 0.0
+    var i = 0
+    while i < g.n {
+        s = s + g.spikes[i]
+        i = i + 1
+    }
+    return s
+}
+
+fn ares_run_lif(pre: AresLifGroup, syn: AresSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64) {
+    var t = 0
+    while t < steps {
+        ares_lif_step(pre)
+        ares_propagate(pre, syn, post)
+        ares_lif_step(post)
+        ares_monitor_step(mon, post)
+        t = t + 1
+    }
+}
+
+fn ares_run_poisson_lif(pre: AresPoissonGroup, syn: AresSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64) {
+    var t = 0
+    while t < steps {
+        ares_poisson_step(pre)
+        var i = 0
+        while i < pre.n {
+            if pre.spikes[i] > 0.0 {
+                var j = 0
+                while j < post.n {
+                    post.input[j] = post.input[j] + syn.w[i][j]
+                    j = j + 1
+                }
+            }
+            i = i + 1
+        }
+        ares_lif_step(post)
+        ares_monitor_step(mon, post)
+        t = t + 1
+    }
+}
+
+fn ares_run_hh(g: AresHhGroup, mon: AresMonitor, steps: i64) {
+    var t = 0
+    while t < steps {
+        ares_hh_step(g)
+        ares_hh_monitor_step(mon, g)
+        t = t + 1
+    }
+}
+
+fn ares_run_hh_cond(g: AresHhGroup, syn: AresCondSynapses, mon: AresMonitor, steps: i64) {
+    var t = 0
+    while t < steps {
+        ares_hh_step(g)
+        ares_cond_step(syn, g.dt)
+        ares_hh_monitor_step(mon, g)
+        t = t + 1
+    }
+}
+
+fn ares_cond_synapses(pre_n: i64, post_n: i64, weight: double, tau: double, e_rev: double) -> AresCondSynapses {
+    var g = dmat(pre_n, post_n)
+    var i = 0
+    while i < pre_n {
+        var j = 0
+        while j < post_n {
+            g[i][j] = weight
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return AresCondSynapses {
+        pre_n: pre_n,
+        post_n: post_n,
+        g: g,
+        tau: tau,
+        e_rev: e_rev
+    }
+}
+
+fn Synapses(pre_n: i64, post_n: i64, weight: double) -> AresSynapses {
+    return ares_dense_synapses(pre_n, post_n, weight)
+}
+
+fn ares_cond_step(s: AresCondSynapses, dt: double) {
+    var decay = exp(-dt / s.tau)
+    var i = 0
+    while i < s.pre_n {
+        var j = 0
+        while j < s.post_n {
+            s.g[i][j] = s.g[i][j] * decay
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn ares_cond_set_weight(s: AresCondSynapses, i: i64, j: i64, w: double) {
+    if i < 0 { throw "ares_cond_set_weight: indice pre negativo" }
+    if i >= s.pre_n { throw "ares_cond_set_weight: indice pre fora dos limites" }
+    if j < 0 { throw "ares_cond_set_weight: indice pos negativo" }
+    if j >= s.post_n { throw "ares_cond_set_weight: indice pos fora dos limites" }
+    s.g[i][j] = w
+}
+
+fn ares_cond_get_weight(s: AresCondSynapses, i: i64, j: i64) -> double {
+    if i < 0 { throw "ares_cond_get_weight: indice pre negativo" }
+    if i >= s.pre_n { throw "ares_cond_get_weight: indice pre fora dos limites" }
+    if j < 0 { throw "ares_cond_get_weight: indice pos negativo" }
+    if j >= s.post_n { throw "ares_cond_get_weight: indice pos fora dos limites" }
+    return s.g[i][j]
+}
+
+fn ares_cond_propagate(pre: AresLifGroup, syn: AresCondSynapses, post: AresLifGroup) {
+    if pre.n != syn.pre_n {
+        throw "ares_cond_propagate: grupo pre nao bate com os pesos"
+    }
+    if post.n != syn.post_n {
+        throw "ares_cond_propagate: grupo post nao bate com os pesos"
+    }
+    var i = 0
+    while i < pre.n {
+        if pre.spikes[i] > 0.0 {
+            var j = 0
+            while j < post.n {
+                post.input[j] = post.input[j] + syn.g[i][j] * (syn.e_rev - post.v[j])
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn ares_hh_monitor_v(mon: AresMonitor, g: AresHhGroup) {
+    if g.n != mon.n { throw "ares_hh_monitor_v: grupo e monitor nao batem" }
+    if mon.t >= mon.steps { throw "ares_hh_monitor_v: monitor cheio" }
+    var i = 0
+    while i < mon.n {
+        mon.v[mon.t][i] = g.v[i]
+        i = i + 1
+    }
+}
+
+fn ares_hh_monitor_spikes(mon: AresMonitor, g: AresHhGroup) {
+    if g.n != mon.n { throw "ares_hh_monitor_spikes: grupo e monitor nao batem" }
+    if mon.t >= mon.steps { throw "ares_hh_monitor_spikes: monitor cheio" }
+    var i = 0
+    while i < mon.n {
+        mon.spikes[mon.t][i] = g.spikes[i]
+        i = i + 1
+    }
+}
+
+fn ares_hh_monitor_step(mon: AresMonitor, g: AresHhGroup) {
+    ares_hh_monitor_v(mon, g)
+    ares_hh_monitor_spikes(mon, g)
+    mon.t = mon.t + 1
+}
+
+fn ares_dense_synapses(pre_n: i64, post_n: i64, weight: double) -> AresSynapses {
+    var w = dmat(pre_n, post_n)
+    var i = 0
+    while i < pre_n {
+        var j = 0
+        while j < post_n {
+            w[i][j] = weight
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return AresSynapses {
+        pre_n: pre_n,
+        post_n: post_n,
+        w: w
+    }
+}
+
+fn ares_set_weight(s: AresSynapses, i: i64, j: i64, w: double) {
+    if i < 0 { throw "ares_set_weight: indice pre negativo" }
+    if i >= s.pre_n { throw "ares_set_weight: indice pre fora dos limites" }
+    if j < 0 { throw "ares_set_weight: indice pos negativo" }
+    if j >= s.post_n { throw "ares_set_weight: indice pos fora dos limites" }
+    s.w[i][j] = w
+}
+
+fn ares_get_weight(s: AresSynapses, i: i64, j: i64) -> double {
+    if i < 0 { throw "ares_get_weight: indice pre negativo" }
+    if i >= s.pre_n { throw "ares_get_weight: indice pre fora dos limites" }
+    if j < 0 { throw "ares_get_weight: indice pos negativo" }
+    if j >= s.post_n { throw "ares_get_weight: indice pos fora dos limites" }
+    return s.w[i][j]
+}
+
+fn ares_scale_weights(s: AresSynapses, factor: double) {
+    var i = 0
+    while i < s.pre_n {
+        var j = 0
+        while j < s.post_n {
+            s.w[i][j] = s.w[i][j] * factor
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn ares_propagate(pre: AresLifGroup, syn: AresSynapses, post: AresLifGroup) {
+    if pre.n != syn.pre_n {
+        throw "ares_propagate: grupo pre nao bate com os pesos"
+    }
+    if post.n != syn.post_n {
+        throw "ares_propagate: grupo post nao bate com os pesos"
+    }
+    var i = 0
+    while i < pre.n {
+        if pre.spikes[i] > 0.0 {
+            var j = 0
+            while j < post.n {
+                post.input[j] = post.input[j] + syn.w[i][j]
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn ares_monitor(steps: i64, n: i64) -> AresMonitor {
+    if steps < 1 { throw "ares_monitor: steps precisa ser >= 1" }
+    if n < 1 { throw "ares_monitor: n precisa ser >= 1" }
+    return AresMonitor {
+        steps: steps,
+        n: n,
+        v: dmat(steps, n),
+        spikes: dmat(steps, n),
+        t: 0
+    }
+}
+
+fn ares_monitor_v(mon: AresMonitor, g: AresLifGroup) {
+    if g.n != mon.n { throw "ares_monitor_v: grupo e monitor nao batem" }
+    if mon.t >= mon.steps { throw "ares_monitor_v: monitor cheio" }
+    var i = 0
+    while i < mon.n {
+        mon.v[mon.t][i] = g.v[i]
+        i = i + 1
+    }
+}
+
+fn ares_monitor_spikes(mon: AresMonitor, g: AresLifGroup) {
+    if g.n != mon.n { throw "ares_monitor_spikes: grupo e monitor nao batem" }
+    if mon.t >= mon.steps { throw "ares_monitor_spikes: monitor cheio" }
+    var i = 0
+    while i < mon.n {
+        mon.spikes[mon.t][i] = g.spikes[i]
+        i = i + 1
+    }
+}
+
+fn ares_monitor_step(mon: AresMonitor, g: AresLifGroup) {
+    ares_monitor_v(mon, g)
+    ares_monitor_spikes(mon, g)
+    mon.t = mon.t + 1
+}
+
+fn ares_monitor_clear(mon: AresMonitor) {
+    mon.t = 0
+}

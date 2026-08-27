@@ -1,4 +1,5 @@
 {
   "aresTorch": "packages/aresTorch/aresTorch.ay",
-  "numAres": "packages/numAres/numAres.ay"
+  "numAres": "packages/numAres/numAres.ay",
+  "aresNeuro": "packages/aresNeuro/aresNeuro.ay"
 }
