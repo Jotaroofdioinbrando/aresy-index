@@ -32,6 +32,7 @@ struct AresHhGroup {
     n_gate: double[],
     input: double[],
     spikes: double[],
+    was_above: double[],
     c_m: double,
     g_na: double,
     g_k: double,
@@ -79,6 +80,15 @@ struct AresCondSynapses {
     e_rev: double
 }
 
+struct AresExpSynapses {
+    pre_n: i64,
+    post_n: i64,
+    w: double[][],
+    g: double[][],
+    tau: double,
+    dt: double
+}
+
 fn _ares_fill_vec(x: double[], n: i64, value: double) {
     var i = 0
     while i < n {
@@ -94,6 +104,10 @@ fn _ares_alloc_lif_vec(n: i64, value: double) -> double[] {
 }
 
 fn ares_lif_group(n: i64, v_rest: double, v_reset: double, v_thresh: double, tau_m: double, tau_ref: double, dt: double) -> AresLifGroup {
+    if n < 1 { throw "ares_lif_group: n precisa ser >= 1" }
+    if tau_m <= 0.0 { throw "ares_lif_group: tau_m precisa ser > 0" }
+    if tau_ref < 0.0 { throw "ares_lif_group: tau_ref precisa ser >= 0" }
+    if dt <= 0.0 { throw "ares_lif_group: dt precisa ser > 0" }
     var g = AresLifGroup {
         n: n,
         v: _ares_alloc_lif_vec(n, v_reset),
@@ -197,12 +211,16 @@ fn ares_lif_spike_count(g: AresLifGroup) -> double {
 }
 
 fn ares_hh_group(n: i64, c_m: double, g_na: double, g_k: double, g_l: double, e_na: double, e_k: double, e_l: double, dt: double) -> AresHhGroup {
+    if n < 1 { throw "ares_hh_group: n precisa ser >= 1" }
+    if c_m <= 0.0 { throw "ares_hh_group: c_m precisa ser > 0" }
+    if dt <= 0.0 { throw "ares_hh_group: dt precisa ser > 0" }
     var v = _ares_alloc_lif_vec(n, -65.0)
     var m = _ares_alloc_lif_vec(n, 0.0529)
     var h = _ares_alloc_lif_vec(n, 0.596)
     var n_gate = _ares_alloc_lif_vec(n, 0.3177)
     var input = _ares_alloc_lif_vec(n, 0.0)
     var spikes = _ares_alloc_lif_vec(n, 0.0)
+    var was_above = _ares_alloc_lif_vec(n, 0.0)
     return AresHhGroup {
         n: n,
         v: v,
@@ -211,6 +229,7 @@ fn ares_hh_group(n: i64, c_m: double, g_na: double, g_k: double, g_l: double, e_
         n_gate: n_gate,
         input: input,
         spikes: spikes,
+        was_above: was_above,
         c_m: c_m,
         g_na: g_na,
         g_k: g_k,
@@ -236,6 +255,7 @@ fn ares_hh_reset(g: AresHhGroup) {
         g.n_gate[i] = 0.3177
         g.input[i] = 0.0
         g.spikes[i] = 0.0
+        g.was_above[i] = 0.0
         i = i + 1
     }
 }
@@ -332,7 +352,16 @@ fn ares_hh_step(g: AresHhGroup) {
         g.n_gate[i] = n_gate
         g.spikes[i] = 0.0
         if v >= g.spike_thresh {
-            g.spikes[i] = 1.0
+            if g.was_above[i] == 0.0 {
+                // só conta como UM spike na borda de subida — sem isso,
+                // o platô do potencial de ação (v fica acima de 0 por
+                // vários passos seguidos) era contado como um spike novo
+                // em CADA passo, inflando muito a contagem total.
+                g.spikes[i] = 1.0
+            }
+            g.was_above[i] = 1.0
+        } else {
+            g.was_above[i] = 0.0
         }
         g.input[i] = 0.0
         i = i + 1
@@ -542,6 +571,9 @@ fn ares_run_hh_cond(g: AresHhGroup, syn: AresCondSynapses, mon: AresMonitor, ste
 }
 
 fn ares_cond_synapses(pre_n: i64, post_n: i64, weight: double, tau: double, e_rev: double) -> AresCondSynapses {
+    if pre_n < 1 { throw "ares_cond_synapses: pre_n precisa ser >= 1" }
+    if post_n < 1 { throw "ares_cond_synapses: post_n precisa ser >= 1" }
+    if tau <= 0.0 { throw "ares_cond_synapses: tau precisa ser > 0" }
     var g = dmat(pre_n, post_n)
     var i = 0
     while i < pre_n {
@@ -563,6 +595,103 @@ fn ares_cond_synapses(pre_n: i64, post_n: i64, weight: double, tau: double, e_re
 
 fn Synapses(pre_n: i64, post_n: i64, weight: double) -> AresSynapses {
     return ares_dense_synapses(pre_n, post_n, weight)
+}
+
+fn ares_exp_synapses(pre_n: i64, post_n: i64, weight: double, tau: double, dt: double) -> AresExpSynapses {
+    if pre_n < 1 { throw "ares_exp_synapses: pre_n precisa ser >= 1" }
+    if post_n < 1 { throw "ares_exp_synapses: post_n precisa ser >= 1" }
+    if tau <= 0.0 { throw "ares_exp_synapses: tau precisa ser > 0" }
+    if dt <= 0.0 { throw "ares_exp_synapses: dt precisa ser > 0" }
+    var w = dmat(pre_n, post_n)
+    var g = dmat(pre_n, post_n)
+    var i = 0
+    while i < pre_n {
+        var j = 0
+        while j < post_n {
+            w[i][j] = weight
+            g[i][j] = 0.0
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return AresExpSynapses {
+        pre_n: pre_n,
+        post_n: post_n,
+        w: w,
+        g: g,
+        tau: tau,
+        dt: dt
+    }
+}
+
+fn ExpSynapses(pre_n: i64, post_n: i64, weight: double, tau: double, dt: double) -> AresExpSynapses {
+    return ares_exp_synapses(pre_n, post_n, weight, tau, dt)
+}
+
+fn ares_exp_set_weight(s: AresExpSynapses, i: i64, j: i64, w: double) {
+    if i < 0 { throw "ares_exp_set_weight: indice pre negativo" }
+    if i >= s.pre_n { throw "ares_exp_set_weight: indice pre fora dos limites" }
+    if j < 0 { throw "ares_exp_set_weight: indice pos negativo" }
+    if j >= s.post_n { throw "ares_exp_set_weight: indice pos fora dos limites" }
+    s.w[i][j] = w
+}
+
+fn ares_exp_current(s: AresExpSynapses, i: i64, j: i64) -> double {
+    if i < 0 { throw "ares_exp_current: indice pre negativo" }
+    if i >= s.pre_n { throw "ares_exp_current: indice pre fora dos limites" }
+    if j < 0 { throw "ares_exp_current: indice pos negativo" }
+    if j >= s.post_n { throw "ares_exp_current: indice pos fora dos limites" }
+    return s.g[i][j]
+}
+
+// Sinapse baseada em corrente com decaimento exponencial (o modelo de
+// sinapse mais comum em neurociência computacional — cada disparo do
+// pré-sinaptico soma "peso" na corrente pos-sinaptica, que depois decai
+// sozinha com constante de tempo "tau"). Diferente da AresSynapses comum
+// (que aplica o peso inteiro de uma vez e some no passo seguinte) e da
+// AresCondSynapses (que multiplica pela diferença de potencial, dependente
+// da voltagem do pos-sinaptico).
+fn ares_exp_step(pre: AresLifGroup, s: AresExpSynapses, post: AresLifGroup) {
+    if pre.n != s.pre_n {
+        throw "ares_exp_step: grupo pre nao bate com os pesos"
+    }
+    if post.n != s.post_n {
+        throw "ares_exp_step: grupo post nao bate com os pesos"
+    }
+    var decay = exp(-s.dt / s.tau)
+    var i = 0
+    while i < s.pre_n {
+        var j = 0
+        while j < s.post_n {
+            s.g[i][j] = s.g[i][j] * decay
+            if pre.spikes[i] > 0.0 {
+                s.g[i][j] = s.g[i][j] + s.w[i][j]
+            }
+            post.input[j] = post.input[j] + s.g[i][j]
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn ares_run_exp_lif(pre: AresLifGroup, syn: AresExpSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64) {
+    var t = 0
+    while t < steps {
+        ares_lif_step(pre)
+        ares_exp_step(pre, syn, post)
+        ares_lif_step(post)
+        ares_monitor_step(mon, post)
+        t = t + 1
+    }
+}
+
+// Taxa media de disparo por neuronio, em Hz, dado um total de spikes
+// acumulado (ex.: soma de ares_lif_spike_count ao longo da simulacao) e
+// o tempo decorrido em milissegundos.
+fn ares_lif_rate(g: AresLifGroup, spike_count_total: double, elapsed_ms: double) -> double {
+    if elapsed_ms <= 0.0 { throw "ares_lif_rate: elapsed_ms precisa ser > 0" }
+    var n_double = g.n * 1.0
+    return (spike_count_total / n_double) / (elapsed_ms / 1000.0)
 }
 
 fn ares_cond_step(s: AresCondSynapses, dt: double) {
@@ -641,6 +770,8 @@ fn ares_hh_monitor_step(mon: AresMonitor, g: AresHhGroup) {
 }
 
 fn ares_dense_synapses(pre_n: i64, post_n: i64, weight: double) -> AresSynapses {
+    if pre_n < 1 { throw "ares_dense_synapses: pre_n precisa ser >= 1" }
+    if post_n < 1 { throw "ares_dense_synapses: post_n precisa ser >= 1" }
     var w = dmat(pre_n, post_n)
     var i = 0
     while i < pre_n {
