@@ -608,6 +608,10 @@ fn ares_run_hh_cond(g: AresHhGroup, syn: AresCondSynapses, mon: AresMonitor, ste
     var t = 0
     while t < steps {
         ares_hh_step(g)
+        // faltava isso: sem propagar, a sinapse nunca soma corrente
+        // nenhuma em post.input — a rede ficava com todo neurônio
+        // isolado, se comportando como se não tivesse sinapse alguma.
+        ares_cond_propagate_hh(g, syn, g)
         ares_cond_step(syn, g.dt)
         ares_hh_monitor_step(mon, g)
         t = t + 1
