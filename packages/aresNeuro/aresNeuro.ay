@@ -994,6 +994,17 @@ fn ares_disconnect_self(s: AresSynapses) {
     }
 }
 
+// Alias de ares_connect_random, só pra manter o padrão de nomenclatura
+// "_hh" usado em ares_cond_propagate_hh — mas aqui a duplicata é
+// puramente cosmética: ares_connect_random só mexe na matriz de peso da
+// sinapse (s.w[i][j]), nunca em campo de neurônio, então já funciona
+// idêntico com AresLifGroup ou AresHhGroup dos dois lados. Existe só
+// pra quem escreve uma rede toda em HH e quer manter os nomes de
+// função consistentes com "_hh" no resto do código.
+fn ares_connect_random_hh(s: AresSynapses, p: double) {
+    ares_connect_random(s, p)
+}
+
 // Atalho: cria a sinapse já podada pra uma fração p das conexões, num
 // só passo (equivalente a 'Synapses(...); S.connect(p=...)' do Brian2).
 fn ares_dense_synapses_random(pre_n: i64, post_n: i64, weight: double, p: double) -> AresSynapses {
