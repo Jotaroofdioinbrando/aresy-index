@@ -787,6 +787,31 @@ fn ares_cond_propagate(pre: AresLifGroup, syn: AresCondSynapses, post: AresLifGr
     }
 }
 
+// Mesma lógica de ares_cond_propagate, mas pra grupos Hodgkin-Huxley — a
+// linguagem não tem sobrecarga de função (não dá pra ter dois 'fn' com o
+// mesmo nome e tipos de parâmetro diferentes), então é uma cópia com os
+// tipos trocados. Os campos usados (n, spikes, input, v) têm o mesmo nome
+// e tipo nos dois structs, então o corpo é idêntico.
+fn ares_cond_propagate_hh(pre: AresHhGroup, syn: AresCondSynapses, post: AresHhGroup) {
+    if pre.n != syn.pre_n {
+        throw "ares_cond_propagate_hh: grupo pre nao bate com os pesos"
+    }
+    if post.n != syn.post_n {
+        throw "ares_cond_propagate_hh: grupo post nao bate com os pesos"
+    }
+    var i = 0
+    while i < pre.n {
+        if pre.spikes[i] > 0.0 {
+            var j = 0
+            while j < post.n {
+                post.input[j] = post.input[j] + syn.g[i][j] * (syn.e_rev - post.v[j])
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
 fn ares_hh_monitor_v(mon: AresMonitor, g: AresHhGroup) {
     if g.n != mon.n { throw "ares_hh_monitor_v: grupo e monitor nao batem" }
     if mon.t >= mon.steps { throw "ares_hh_monitor_v: monitor cheio" }
