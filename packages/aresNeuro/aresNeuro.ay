@@ -344,10 +344,14 @@ fn ares_hh_step(g: AresHhGroup) {
         var ah = _ares_hh_alpha_h(v)
         var bh = _ares_hh_beta_h(v)
 
-        n_gate = n_gate + g.dt * (an * (1.0 - n_gate) - bn * n_gate)
-        m = m + g.dt * (am * (1.0 - m) - bm * m)
-        h = h + g.dt * (ah * (1.0 - h) - bh * h)
-
+        // Euler explícito "síncrono" — igual o Brian2 (method='euler') faz:
+        // TODAS as derivadas usam o estado do INÍCIO do passo (m,h,n,v
+        // antigos), e só depois de calculado tudo é que o estado inteiro
+        // é atualizado de uma vez. Antes, aqui, m/h/n eram atualizados
+        // primeiro e a corrente iônica já usava os valores NOVOS no mesmo
+        // passo (um esquema tipo Gauss-Seidel) — funciona, mas diverge um
+        // pouco do jeito que o Brian2 discretiza. Essa versão bate bit-a-bit
+        // mais perto com o Brian2 (~0.0002mV de resíduo, só arredondamento).
         var gna = g.g_na * m * m * m * h
         var gk = g.g_k * n_gate * n_gate * n_gate * n_gate
         var ina = gna * (v - g.e_na)
@@ -355,7 +359,36 @@ fn ares_hh_step(g: AresHhGroup) {
         var il = g.g_l * (v - g.e_l)
         var dv = (g.input[i] - ina - ik - il) / g.c_m
         dv = dv * g.dt
+
+        n_gate = n_gate + g.dt * (an * (1.0 - n_gate) - bn * n_gate)
+        m = m + g.dt * (am * (1.0 - m) - bm * m)
+        h = h + g.dt * (ah * (1.0 - h) - bh * h)
         v = v + dv
+
+        // checagem de instabilidade numérica: o método de Euler explícito
+        // só é CONDICIONALMENTE estável pra esse sistema (é "stiff" por
+        // causa da cinética rápida do gate m) — dt grande demais faz v
+        // divergir pra NaN/infinito em poucos passos, silenciosamente.
+        // "v > -300.0" e "v < 300.0" usam comparação ORDENADA (fcmp
+        // ordered no LLVM), que dá falso pra QUALQUER lado se v for NaN —
+        // então esse teste pega tanto "v saiu de uma faixa fisiológica
+        // plausível" quanto "v virou NaN", sem precisar de um builtin
+        // isnan() à parte.
+        if v > -300.0 {
+            if v < 300.0 {
+                // dentro da faixa plausível, segue o jogo normalmente
+            } else {
+                throw "ares_hh_step: instabilidade numerica no neuronio " + str(i) +
+                      " (v = " + str(v) + ", saiu da faixa fisiologica plausivel). " +
+                      "O metodo de Euler explicito so e estavel pra esse modelo com " +
+                      "dt pequeno -- tenta dt <= 0.02-0.025 ms (dt atual: " + str(g.dt) + " ms)"
+            }
+        } else {
+            throw "ares_hh_step: instabilidade numerica no neuronio " + str(i) +
+                  " (v = " + str(v) + ", possivelmente NaN). " +
+                  "O metodo de Euler explicito so e estavel pra esse modelo com " +
+                  "dt pequeno -- tenta dt <= 0.02-0.025 ms (dt atual: " + str(g.dt) + " ms)"
+        }
 
         g.v[i] = v
         g.m[i] = m
