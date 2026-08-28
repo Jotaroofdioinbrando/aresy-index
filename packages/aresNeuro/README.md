@@ -1,292 +1,267 @@
 # aresNeuro
 
-Biblioteca de simulação neural para aresY. API curta, sem depender do
-Brian2 nem imitar o nome dele — mas pensada pra quem já conhece Brian2 se
-sentir em casa (por isso as versões "apelido" tipo `NeuronGroup`,
-`StateMonitor`, `Synapses` também existem, lado a lado com os nomes
-`ares_*`).
+Biblioteca de simulação neural para aresY.
+
+O foco é manter a API curta e publicável no `aresy index`, sem entrar no
+`stdlib/`.
 
 O pacote traz:
-- neurônio LIF (integrate-and-fire) discreto
-- neurônio Hodgkin-Huxley clássico (o de verdade, com m/h/n)
-- sinapses densas (peso fixo), exponenciais (com decaimento) e condutivas
-  (`g * (e_rev - v)`, a mais fisiologicamente realista)
-- `TimedArray` (corrente/estímulo pré-gravado por passo)
-- `PoissonGroup` (spikes aleatórios com taxa configurável)
-- monitor de estado (`v`) e spikes ao longo do tempo
+- neurônio LIF discreto com sinapses densas, condutivas e exponenciais
+- neurônio Hodgkin-Huxley clássico discreto
+- `TimedArray`
+- `PoissonGroup`
+- monitor de estado e spikes
 
-Instala com `aresy install aresNeuro` (veja o `aresy-index`) ou importa
-localmente com `import "aresNeuro.ay"` se o arquivo estiver no mesmo
-diretório do seu programa.
+Convenção de nomes: toda função "de baixo nível" começa com `ares_` (snake_case).
+Os nomes "amigáveis" (`NeuronGroup`, `Synapses`, `StateMonitor`, etc., no
+estilo Brian2) são só wrappers finos que chamam a função `ares_*`
+correspondente — funcionalmente idênticos, então use o que preferir.
 
----
-
-## Como importar
+## Structs
 
 ```aresy
-import "aresNeuro.ay"   // localmente, se o arquivo estiver do lado
-// depois de instalado via aresy install:
-// import aresNeuro
+struct AresLifGroup {
+    n: i64,
+    v: double[],
+    input: double[],
+    spikes: double[],
+    refractory: double[],
+    v_rest: double,
+    v_reset: double,
+    v_thresh: double,
+    tau_m: double,
+    tau_ref: double,
+    dt: double
+}
+
+struct AresHhGroup {
+    n: i64,
+    v: double[],
+    m: double[],
+    h: double[],
+    n_gate: double[],
+    input: double[],
+    spikes: double[],
+    was_above: double[],
+    c_m: double,
+    g_na: double,
+    g_k: double,
+    g_l: double,
+    e_na: double,
+    e_k: double,
+    e_l: double,
+    dt: double,
+    spike_thresh: double
+}
+
+struct AresSynapses {
+    pre_n: i64,
+    post_n: i64,
+    w: double[][]
+}
+
+struct AresCondSynapses {
+    pre_n: i64,
+    post_n: i64,
+    g: double[][],
+    tau: double,
+    e_rev: double
+}
+
+struct AresExpSynapses {
+    pre_n: i64,
+    post_n: i64,
+    w: double[][],
+    g: double[][],
+    tau: double,
+    dt: double
+}
+
+struct AresMonitor {
+    steps: i64,
+    n: i64,
+    v: double[][],
+    spikes: double[][],
+    t: i64
+}
+
+struct AresTimedArray {
+    steps: i64,
+    n: i64,
+    values: double[][],
+    dt: double
+}
+
+struct AresPoissonGroup {
+    n: i64,
+    rates: double[],
+    spikes: double[],
+    dt: double
+}
 ```
 
-## Convenção de unidades
-
-Não tem sistema de unidades embutido (ao contrário do Brian2) — os
-números são só `double`, e a convenção usada nos exemplos e nos valores
-default é **mV** pra tensão, **ms** pra tempo e as unidades "clássicas"
-de canal (mS/cm², μA/cm² etc.) pro Hodgkin-Huxley. Você escolhe a escala;
-o importante é ser consistente entre `dt`, as constantes de tempo (`tau_m`,
-`tau_ref`, `tau`) e as correntes que você injeta.
-
----
-
-## LIF (integrate-and-fire)
-
-### Criar o grupo
-```aresy
-var g = ares_lif_group(n, v_rest, v_reset, v_thresh, tau_m, tau_ref, dt)
-// ou, mais parecido com Brian2:
-var g = NeuronGroup(n, v_rest, v_reset, v_thresh, tau_m, tau_ref, dt)
-```
-`struct AresLifGroup { n, v[], input[], spikes[], refractory[], v_rest,
-v_reset, v_thresh, tau_m, tau_ref, dt }`
-
-### Operações
-| Função | O que faz |
-|---|---|
-| `ares_drive(g, idx, current)` | injeta corrente em UM neurônio (some, e é zerada a cada `ares_lif_step`) |
-| `ares_drive_all(g, current)` | injeta a mesma corrente em todos os neurônios |
-| `ares_lif_step(g)` | avança um passo de `dt` (Euler explícito) |
-| `ares_lif_voltage(g, idx)` | lê `v` de um neurônio |
-| `ares_lif_spike(g, idx)` | `1.0` se disparou nesse passo, senão `0.0` |
-| `ares_lif_spike_count(g)` | soma de disparos de todos os neurônios nesse passo |
-| `ares_lif_reset(g)` | volta todo mundo pro estado inicial (`v_reset`, sem refratário) |
-| `ares_lif_rate(g, spike_count_total, elapsed_ms)` | taxa de disparo (Hz) a partir de uma contagem acumulada |
-
-**Importante — corrente é zerada a cada passo.** `ares_lif_step` zera
-`g.input[i]` no final. Se você quer uma corrente constante ao longo da
-simulação (tipo o `I` de uma equação do Brian2), precisa chamar
-`ares_drive`/`ares_drive_all` **dentro do loop, a cada iteração** — não
-só uma vez antes do `while`.
-
-**Refratário**: discretizado do mesmo jeito que o Brian2 discretiza
-`unless refractory` — o passo do disparo já conta como o primeiro tick da
-janela refratária, então depois do disparo o código segura por
-`tau_ref - dt`, não `tau_ref` inteiro. (Isso foi corrigido recentemente;
-se você tem uma cópia antiga da lib com uma contagem de spikes ~3.5% mais
-alta que o esperado, é essa a causa — atualiza.)
-
----
-
-## Hodgkin-Huxley
-
-### Criar o grupo
-```aresy
-var g = ares_hh_group(n, c_m, g_na, g_k, g_l, e_na, e_k, e_l, dt)
-// ou:
-var g = HodgkinHuxleyGroup(n, c_m, g_na, g_k, g_l, e_na, e_k, e_l, dt)
-```
-`struct AresHhGroup { n, v[], m[], h[], n_gate[], input[], spikes[],
-was_above[], c_m, g_na, g_k, g_l, e_na, e_k, e_l, dt, spike_thresh }`
-
-Todo neurônio nasce em `v = -65.0` com `m, h, n_gate` já nos valores de
-equilíbrio fisiológico clássicos do HH em repouso (`0.0529`, `0.596`,
-`0.3177`) — não precisa inicializar isso na mão.
-
-As equações de taxa (`alpha_m`, `beta_m`, etc.) usam `v` **absoluto**
-(direto em mV, repouso em -65mV), já com o deslocamento do potencial de
-repouso embutido nas constantes. Isso é diferente das fórmulas clássicas
-de Hodgkin & Huxley (1952), que foram derivadas pra uma variável
-deslocada (repouso em 0). Se for comparar com um script Brian2 escrito
-"colando" as fórmulas de 1952 direto, lembra de aplicar esse
-deslocamento (`V = v + 65`) nas equações do Brian2 também, senão os dois
-modelos não são a mesma física — só parecem, na superfície.
-
-### Operações
-| Função | O que faz |
-|---|---|
-| `ares_hh_drive(g, idx, current)` | injeta corrente em UM neurônio (zerada a cada passo) |
-| `ares_hh_drive_all(g, current)` | injeta em todos |
-| `ares_hh_step(g)` | avança um passo de `dt` |
-| `ares_hh_voltage(g, idx)` | lê `v` |
-| `ares_hh_spike(g, idx)` | `1.0` se cruzou o limiar de disparo NESSE passo (borda de subida — o platô do potencial de ação não conta várias vezes) |
-| `ares_hh_spike_count(g)` | soma de disparos nesse passo |
-| `ares_hh_reset(g)` | volta tudo pro estado de repouso |
-| `ares_hh_set_state(g, idx, v, m, h, n_gate)` | força um estado inicial customizado num neurônio |
-
-**Ordem de integração**: `ares_hh_step` usa Euler explícito **síncrono**
-— todas as derivadas (`m`, `h`, `n`, `v`) usam o estado do início do
-passo; tudo é atualizado só no final. É o mesmo jeito que o `method='euler'`
-do Brian2 discretiza, então os dois batem bem próximo (diferença residual
-de arredondamento, não de modelo).
-
-**Estabilidade numérica — leia isto antes de escolher `dt`.** O sistema
-HH é "stiff" (o gate `m` reage muito mais rápido que os outros perto do
-limiar), e Euler explícito só é **condicionalmente estável**: acima de um
-certo `dt` crítico, a simulação diverge pra valores absurdos ou `NaN` em
-poucos passos. Na prática (parâmetros clássicos):
-- `dt <= 0.02–0.025 ms`: seguro, erro de discretização pequeno
-- `dt` entre `0.03` e `0.07 ms`: ainda converge, mas com erro visível (a tensão final já desvia vários mV do valor "verdadeiro")
-- `dt >= 0.08 ms` (pros parâmetros clássicos): instável, diverge
-
-Se `dt` for grande demais, `ares_hh_step` agora **detecta e lança uma
-exceção** (`throw`) em vez de deixar o resultado virar `NaN` silenciosamente
-— dá pra capturar com `try`/`catch` se quiser reagir (ex.: tentar de novo
-com `dt` menor).
-
----
-
-## Sinapses
-
-Três tipos, cada um com seu jeito de propagar o efeito de um spike:
-
-### Densas (peso fixo, soma direto na corrente)
-```aresy
-var syn = ares_dense_synapses(pre_n, post_n, weight)   // ou Synapses(...)
-ares_set_weight(syn, i, j, w)
-ares_get_weight(syn, i, j)
-ares_scale_weights(syn, factor)
-ares_propagate(pre, syn, post)   // só funciona entre AresLifGroup
-
-// conectividade esparsa (equivalente a S.connect(p=...) do Brian2):
-ares_connect_random(syn, p)              // poda pra ~p% das conexões, aleatório
-ares_disconnect_self(syn)                // zera a diagonal (sem auto-sinapse)
-var syn2 = ares_dense_synapses_random(pre_n, post_n, weight, p)  // cria já podada
-```
-
-### Exponenciais (corrente com decaimento entre spikes)
-```aresy
-var syn = ares_exp_synapses(pre_n, post_n, weight, tau, dt)  // ou ExpSynapses(...)
-ares_exp_set_weight(syn, i, j, w)
-ares_exp_current(syn, i, j)
-ares_exp_step(pre, syn, post)    // decai + propaga, só entre AresLifGroup
-
-ares_exp_connect_random(syn, p)
-ares_exp_disconnect_self(syn)
-var syn2 = ares_exp_synapses_random(pre_n, post_n, weight, tau, dt, p)
-```
-
-### Condutivas (a mais realista — `g * (e_rev - v)`)
-```aresy
-var syn = ares_cond_synapses(pre_n, post_n, weight, tau, e_rev)
-ares_cond_set_weight(syn, i, j, w)
-ares_cond_get_weight(syn, i, j)
-ares_cond_step(syn, dt)              // decai a condutância entre spikes
-ares_cond_propagate(pre, syn, post)      // pre/post do tipo AresLifGroup
-ares_cond_propagate_hh(pre, syn, post)   // pre/post do tipo AresHhGroup
-
-ares_cond_connect_random(syn, p)
-ares_cond_disconnect_self(syn)
-var syn2 = ares_cond_synapses_random(pre_n, post_n, weight, tau, e_rev, p)
-```
-
-**Cuidado com `ares_cond_step`.** `ares_cond_synapses` já cria a matriz
-`g` inteira preenchida com `weight` (não começa em zero, e não existe
-uma função que "recarregue" `g[i][j]` a cada spike como a exponencial
-faz). Ou seja: `ares_cond_propagate*` injeta corrente toda vez que o
-pré-sináptico dispara, usando o valor de `g` que estiver ali naquele
-momento — se você também chamar `ares_cond_step` a cada passo, a
-condutância vai decaindo pra zero com o tempo e a sinapse "murcha"
-mesmo continuando a disparar. Só chama `ares_cond_step` se for essa a
-dinâmica que você quer (ex.: simular fadiga sináptica); pra uma sinapse
-condutiva de peso constante, não chama.
-
-**Por que existe `ares_cond_propagate` E `ares_cond_propagate_hh`
-separados**: o aresY não tem sobrecarga de função (não dá pra ter dois
-`fn` com o mesmo nome recebendo tipos de struct diferentes), então uma
-sinapse condutiva conectando neurônios HH precisa da variante `_hh`. Se
-você tentar `ares_cond_propagate` com um `AresHhGroup`, o compilador
-recusa em tempo de compilação com uma mensagem clara — não é silencioso.
-Densas e exponenciais, por enquanto, só têm a versão LIF (não tem
-`ares_propagate_hh`/`ares_exp_step_hh` ainda).
-
----
-
-## Monitores
+## Neurônio LIF (integra-e-dispara)
 
 ```aresy
-var mon = ares_monitor(steps, n)     // ou StateMonitor(...) / SpikeMonitor(...)
+fn ares_lif_group(n: i64, v_rest: double, v_reset: double, v_thresh: double, tau_m: double, tau_ref: double, dt: double) -> AresLifGroup
+fn NeuronGroup(n: i64, v_rest: double, v_reset: double, v_thresh: double, tau_m: double, tau_ref: double, dt: double) -> AresLifGroup   // alias de ares_lif_group
 
-// a cada passo da simulação:
-ares_monitor_step(mon, g)            // LIF: grava v[t][i] e spikes[t][i]
-ares_hh_monitor_step(mon, g)         // HH: idem
+fn ares_lif_step(g: AresLifGroup)
+fn ares_lif_reset(g: AresLifGroup)
 
-// ou separado, se só quiser um dos dois:
-ares_monitor_v(mon, g)               // só v (LIF)
-ares_monitor_spikes(mon, g)          // só spikes (LIF)
-ares_hh_monitor_v(mon, g)            // só v (HH)
-ares_hh_monitor_spikes(mon, g)       // só spikes (HH)
+fn ares_drive(g: AresLifGroup, idx: i64, current: double)
+fn ares_drive_all(g: AresLifGroup, current: double)
 
-ares_monitor_clear(mon)              // reseta o cursor de tempo do monitor pra 0
-
-// leitura depois:
-print(mon.v[passo][neuronio])
-print(mon.spikes[passo][neuronio])
+fn ares_lif_voltage(g: AresLifGroup, idx: i64) -> double
+fn ares_lif_spike(g: AresLifGroup, idx: i64) -> double
+fn ares_lif_spike_count(g: AresLifGroup) -> double
+fn ares_lif_rate(g: AresLifGroup, spike_count_total: double, elapsed_ms: double) -> double
 ```
-`struct AresMonitor { steps, n, v[][], spikes[][], t }` — `mon.t` é o
-cursor interno (quantos passos já foram gravados); passar do `steps`
-lança `throw` ("monitor cheio").
 
----
+## Neurônio Hodgkin-Huxley clássico
 
-## TimedArray (estímulo pré-gravado)
-
-Útil pra reproduzir exatamente a mesma sequência de corrente em vários
-neurônios/simulações, ou importar um estímulo gerado fora do aresY.
+Euler explícito "síncrono" (todas as derivadas usam o estado do início do
+passo, igual `method='euler'` do Brian2). `dt` grande demais desestabiliza
+numericamente — o próprio `ares_hh_step` lança uma exceção se `v` sair da
+faixa fisiológica plausível (`-300` a `300` mV) ou virar NaN; tente
+`dt <= 0.02–0.025` ms.
 
 ```aresy
-var ta = ares_timed_array_from_shape(steps, n, dt)   // aloca vazio
-ares_timed_array_set(ta, passo, idx, valor)
-// ...preenche...
-var v = ares_timed_array_get(ta, passo, idx)         // ou _at, é alias
+fn ares_hh_group(n: i64, c_m: double, g_na: double, g_k: double, g_l: double, e_na: double, e_k: double, e_l: double, dt: double) -> AresHhGroup
+fn HodgkinHuxleyGroup(n: i64, c_m: double, g_na: double, g_k: double, g_l: double, e_na: double, e_k: double, e_l: double, dt: double) -> AresHhGroup   // alias de ares_hh_group
 
-// ou já construindo a partir de uma matriz double[][] pronta:
-var ta2 = ares_timed_array(matriz, dt)               // ou TimedArray(...)
+fn ares_hh_step(g: AresHhGroup)
+fn ares_hh_reset(g: AresHhGroup)
+fn ares_hh_set_state(g: AresHhGroup, idx: i64, v: double, m: double, h: double, n_gate: double)
+
+fn ares_hh_drive(g: AresHhGroup, idx: i64, current: double)
+fn ares_hh_drive_all(g: AresHhGroup, current: double)
+
+fn ares_hh_voltage(g: AresHhGroup, idx: i64) -> double
+fn ares_hh_spike(g: AresHhGroup, idx: i64) -> double   // 1.0 só na borda de subida (1 spike por potencial de ação, não por passo acima do limiar)
+fn ares_hh_spike_count(g: AresHhGroup) -> double
 ```
-`struct AresTimedArray { steps, n, values[][], dt }`
 
----
-
-## PoissonGroup (spikes aleatórios)
+## Sinapses densas (peso fixo, aplicado inteiro a cada disparo)
 
 ```aresy
-var pg = ares_poisson_group(n, rate, dt)             // taxa igual pra todos
-// ou taxa por neurônio:
-var rates = darray(n)
-rates[0] = 15.0
-// ...
-var pg2 = ares_poisson_group_rates(n, rates, dt)      // ou PoissonGroupRates(...)
+fn ares_dense_synapses(pre_n: i64, post_n: i64, weight: double) -> AresSynapses
+fn Synapses(pre_n: i64, post_n: i64, weight: double) -> AresSynapses   // alias de ares_dense_synapses
+fn ares_dense_synapses_random(pre_n: i64, post_n: i64, weight: double, p: double) -> AresSynapses   // já cria podada pra fração p das conexões
 
-ares_poisson_set_rate(pg, idx, rate)
-ares_poisson_step(pg)                // sorteia spikes nesse passo (rate*dt = prob.)
-ares_poisson_spike_count(pg)
+fn ares_set_weight(s: AresSynapses, i: i64, j: i64, w: double)
+fn ares_get_weight(s: AresSynapses, i: i64, j: i64) -> double
+fn ares_scale_weights(s: AresSynapses, factor: double)
+fn ares_connect_random(s: AresSynapses, p: double)     // poda pra fração p das conexões (continua denso por baixo, O(n²))
+fn ares_disconnect_self(s: AresSynapses)                // zera a diagonal (i == j)
+
+fn ares_propagate(pre: AresLifGroup, syn: AresSynapses, post: AresLifGroup)
+fn ares_run_lif(pre: AresLifGroup, syn: AresSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64)
+fn ares_run_poisson_lif(pre: AresPoissonGroup, syn: AresSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64)
 ```
-`struct AresPoissonGroup { n, rates[], spikes[], dt }`. Usa `random()` do
-compilador — não é reprodutível entre execuções (sem seed fixa hoje).
 
----
+## Sinapses condutivas (corrente = g · (e_rev − v_pós))
 
-## Atalhos "rode tudo de uma vez"
-
-Pra simulações simples sem precisar escrever o `while` manualmente:
 ```aresy
-ares_run_lif(pre, syn, post, mon, steps)          // LIF + sinapse densa
-ares_run_poisson_lif(pre, syn, post, mon, steps)  // Poisson -> LIF, sinapse densa
-ares_run_exp_lif(pre, syn, post, mon, steps)      // LIF + sinapse exponencial
-ares_run_hh(g, mon, steps)                        // HH sozinho, sem sinapse
-ares_run_hh_cond(g, syn, mon, steps)              // HH recorrente + sinapse condutiva (g conectado nele mesmo)
-```
-Pra qualquer coisa mais customizada (injetar corrente variável por
-passo, misturar tipos de sinapse, redes LIF+HH juntas), escreve o `while`
-na mão — é só umas 5 linhas, e os exemplos abaixo mostram o padrão.
+fn ares_cond_synapses(pre_n: i64, post_n: i64, weight: double, tau: double, e_rev: double) -> AresCondSynapses
+fn ares_cond_synapses_random(pre_n: i64, post_n: i64, weight: double, tau: double, e_rev: double, p: double) -> AresCondSynapses
 
----
+fn ares_cond_set_weight(s: AresCondSynapses, i: i64, j: i64, w: double)
+fn ares_cond_get_weight(s: AresCondSynapses, i: i64, j: i64) -> double
+fn ares_cond_connect_random(s: AresCondSynapses, p: double)
+fn ares_cond_disconnect_self(s: AresCondSynapses)
+fn ares_cond_step(s: AresCondSynapses, dt: double)       // decai a condutância; chame 1x por passo
+
+fn ares_cond_propagate(pre: AresLifGroup, syn: AresCondSynapses, post: AresLifGroup)
+fn ares_cond_propagate_hh(pre: AresHhGroup, syn: AresCondSynapses, post: AresHhGroup)   // mesma lógica, versão pra grupos Hodgkin-Huxley
+fn ares_run_hh_cond(g: AresHhGroup, syn: AresCondSynapses, mon: AresMonitor, steps: i64)
+```
+
+## Sinapses exponenciais (corrente com decaimento — o modelo mais comum)
+
+```aresy
+fn ares_exp_synapses(pre_n: i64, post_n: i64, weight: double, tau: double, dt: double) -> AresExpSynapses
+fn ExpSynapses(pre_n: i64, post_n: i64, weight: double, tau: double, dt: double) -> AresExpSynapses   // alias de ares_exp_synapses
+fn ares_exp_synapses_random(pre_n: i64, post_n: i64, weight: double, tau: double, dt: double, p: double) -> AresExpSynapses
+
+fn ares_exp_set_weight(s: AresExpSynapses, i: i64, j: i64, w: double)
+fn ares_exp_current(s: AresExpSynapses, i: i64, j: i64) -> double
+fn ares_exp_connect_random(s: AresExpSynapses, p: double)
+fn ares_exp_disconnect_self(s: AresExpSynapses)
+
+fn ares_exp_step(pre: AresLifGroup, s: AresExpSynapses, post: AresLifGroup)   // já decai + injeta em post.input; chame 1x por passo, sem precisar de ares_propagate
+fn ares_run_exp_lif(pre: AresLifGroup, syn: AresExpSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64)
+```
+
+## Monitor de estado e spikes
+
+```aresy
+fn ares_monitor(steps: i64, n: i64) -> AresMonitor
+fn StateMonitor(steps: i64, n: i64) -> AresMonitor   // alias de ares_monitor
+fn SpikeMonitor(steps: i64, n: i64) -> AresMonitor   // idem — é o mesmo struct, guarda v e spikes juntos
+
+fn ares_monitor_v(mon: AresMonitor, g: AresLifGroup)
+fn ares_monitor_spikes(mon: AresMonitor, g: AresLifGroup)
+fn ares_monitor_step(mon: AresMonitor, g: AresLifGroup)       // chama as duas acima + avança mon.t
+fn ares_monitor_clear(mon: AresMonitor)                        // zera mon.t (reusa o monitor sem realocar)
+
+fn ares_hh_monitor_v(mon: AresMonitor, g: AresHhGroup)
+fn ares_hh_monitor_spikes(mon: AresMonitor, g: AresHhGroup)
+fn ares_hh_monitor_step(mon: AresMonitor, g: AresHhGroup)     // equivalente a ares_monitor_step, mas pra grupos HH
+```
+
+Leitura dos dados guardados: `mon.v[passo][idx]` e `mon.spikes[passo][idx]`
+(ambos `double[][]`, shape `(steps, n)`).
+
+## TimedArray (injeta uma corrente pré-definida por passo)
+
+```aresy
+fn ares_timed_array(values: double[][], dt: double) -> AresTimedArray
+fn TimedArray(values: double[][], dt: double) -> AresTimedArray   // alias de ares_timed_array
+fn ares_timed_array_from_shape(steps: i64, n: i64, dt: double) -> AresTimedArray   // aloca vazio (tudo 0.0), pra preencher depois com ares_timed_array_set
+
+fn ares_timed_array_steps(ta: AresTimedArray) -> i64
+fn ares_timed_array_n(ta: AresTimedArray) -> i64
+fn ares_timed_array_dt(ta: AresTimedArray) -> double
+
+fn ares_timed_array_set(ta: AresTimedArray, step: i64, idx: i64, value: double)
+fn ares_timed_array_get(ta: AresTimedArray, step: i64, idx: i64) -> double
+fn ares_timed_array_at(ta: AresTimedArray, step: i64, idx: i64) -> double   // alias de ares_timed_array_get
+```
+
+## PoissonGroup (spikes aleatórios com taxa média fixa)
+
+```aresy
+fn ares_poisson_group(n: i64, rate: double, dt: double) -> AresPoissonGroup                 // mesma taxa pra todo neurônio
+fn PoissonGroup(n: i64, rate: double, dt: double) -> AresPoissonGroup                        // alias de ares_poisson_group
+fn ares_poisson_group_rates(n: i64, rates: double[], dt: double) -> AresPoissonGroup         // uma taxa por neurônio
+fn PoissonGroupRates(n: i64, rates: double[], dt: double) -> AresPoissonGroup                // alias de ares_poisson_group_rates
+
+fn ares_poisson_set_rate(g: AresPoissonGroup, idx: i64, rate: double)
+fn ares_poisson_step(g: AresPoissonGroup)
+fn ares_poisson_spike_count(g: AresPoissonGroup) -> double
+```
+
+## Loops de simulação prontos (`ares_run_*`)
+
+Cada um roda a simulação inteira num só loop (passo do neurônio pré →
+propagação → passo do neurônio pós → registro no monitor), repetido `steps`
+vezes — equivalente a montar esse `while` na mão, só que já pronto:
+
+```aresy
+fn ares_run_lif(pre: AresLifGroup, syn: AresSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64)
+fn ares_run_poisson_lif(pre: AresPoissonGroup, syn: AresSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64)
+fn ares_run_exp_lif(pre: AresLifGroup, syn: AresExpSynapses, post: AresLifGroup, mon: AresMonitor, steps: i64)
+fn ares_run_hh(g: AresHhGroup, mon: AresMonitor, steps: i64)
+fn ares_run_hh_cond(g: AresHhGroup, syn: AresCondSynapses, mon: AresMonitor, steps: i64)
+```
 
 ## Exemplos
 
-### LIF com sinapse densa
 ```aresy
-import "aresNeuro.ay"
+import "aresNeuro.ay"   // localmente, se o arquivo estiver no mesmo diretório
+// depois de publicar no índice:
+// import aresNeuro
 
 fn main() {
     var g = ares_lif_group(3, -65.0, -70.0, -50.0, 10.0, 2.0, 0.1)
@@ -312,81 +287,22 @@ fn main() {
 }
 ```
 
-### HH mínimo, com corrente constante
+HH mínimo:
+
 ```aresy
 import "aresNeuro.ay"
 
 fn main() {
-    var h = ares_hh_group(1, 1.0, 120.0, 36.0, 0.3, 50.0, -77.0, -54.4, 0.01)
-    var t = 0
-    while t < 5000 {
-        ares_hh_drive(h, 0, 10.0)   // precisa injetar A CADA passo
-        ares_hh_step(h)
-        t = t + 1
-    }
+    var h = ares_hh_group(1, 1.0, 120.0, 36.0, 0.3, 50.0, -77.0, -54.4, 0.1)
+    ares_hh_drive(h, 0, 10.0)
+    ares_hh_step(h)
     print(ares_hh_voltage(h, 0))
     return 0
 }
 ```
 
-### Rede HH recorrente com sinapse condutiva
-```aresy
-import "aresNeuro.ay"
+Poisson + `TimedArray`:
 
-fn main() {
-    var n = 100
-    var g = HodgkinHuxleyGroup(n, 1.0, 120.0, 36.0, 0.3, 50.0, -77.0, -54.4, 0.01)
-    var syn = ares_cond_synapses(n, n, 0.05, 5.0, 0.0)
-    var mon = StateMonitor(2000, n)
-
-    var t = 0
-    while t < 2000 {
-        var i = 0
-        while i < n {
-            ares_hh_drive(g, i, 10.0)
-            i = i + 1
-        }
-        ares_hh_step(g)
-        ares_cond_propagate_hh(g, syn, g)   // note o _hh no final
-        ares_hh_monitor_step(mon, g)
-        t = t + 1
-    }
-
-    print(ares_hh_voltage(g, 0))
-    return 0
-}
-```
-
-### Rede LIF esparsa (10% de conectividade, sem auto-sinapse)
-```aresy
-import "aresNeuro.ay"
-
-fn main() {
-    var n = 200
-    var g = ares_lif_group(n, -65.0, -70.0, -50.0, 10.0, 2.0, 0.1)
-
-    // so ~10% das n*n conexoes possiveis ficam ativas, sorteadas na hora
-    var syn = ares_dense_synapses_random(n, n, 1.5, 0.1)
-    ares_disconnect_self(syn)   // remove i->i, que ares_connect_random pode ter sorteado
-
-    var mon = ares_monitor(500, n)
-    var t = 0
-    while t < 500 {
-        if t < 10 {
-            ares_drive_all(g, 20.0)   // estimulo inicial pra disparar a rede
-        }
-        ares_lif_step(g)
-        ares_propagate(g, syn, g)
-        ares_monitor_step(mon, g)
-        t = t + 1
-    }
-
-    print(ares_lif_spike_count(g))
-    return 0
-}
-```
-
-### Poisson + TimedArray
 ```aresy
 import "aresNeuro.ay"
 
@@ -405,23 +321,3 @@ fn main() {
     return 0
 }
 ```
-
----
-
-## Limitações conhecidas
-
-- Sem sistema de unidades — números crus, você garante a consistência.
-- `random()` do PoissonGroup não tem seed configurável (sem reprodutibilidade).
-- Sinapses densas e exponenciais não têm variante `_hh` ainda (só a
-  condutiva tem `ares_cond_propagate_hh`); conectar HH com essas duas
-  exige adaptar a função na mão por enquanto.
-- `ares_connect_random`/`_hh` selecionam conexões aleatoriamente, mas a
-  matriz de peso continua sendo alocada cheia (`pre_n × post_n`) por
-  baixo dos panos — ainda é O(n²) em memória mesmo com poucas conexões
-  reais ativas, só a *dinâmica* fica esparsa, não o armazenamento. Pra
-  redes muito grandes com conectividade rala de verdade, isso ainda
-  desperdiça memória comparado a uma representação esparsa nativa (lista
-  de adjacência), que não existe aqui.
-- Sem plasticidade sináptica (STDP e afins).
-- HH só tem Euler explícito — sem um integrador implícito/adaptativo,
-  `dt` pequeno é obrigatório pra estabilidade (ver seção acima).
