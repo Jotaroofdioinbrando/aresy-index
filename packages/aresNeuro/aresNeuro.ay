@@ -190,7 +190,18 @@ fn ares_lif_step(g: AresLifGroup) {
             if g.v[i] >= g.v_thresh {
                 g.spikes[i] = 1.0
                 g.v[i] = g.v_reset
-                g.refractory[i] = g.tau_ref
+                // -1 tick de dt aqui: o próprio passo do disparo já conta
+                // como o primeiro instante da janela refratária (é assim
+                // que o Brian2 discretiza "unless refractory" — o reset
+                // acontece NESTE tick, então só falta segurar o restante).
+                // Sem o "- g.dt", o neurônio ficava preso um passo A MAIS
+                // que o esperado, alongando o período entre spikes e
+                // desviando a contagem total (~3.5% a menos numa simulação
+                // longa) e a tensão de regime.
+                g.refractory[i] = g.tau_ref - g.dt
+                if g.refractory[i] < 0.0 {
+                    g.refractory[i] = 0.0
+                }
             } else {
                 g.spikes[i] = 0.0
             }
