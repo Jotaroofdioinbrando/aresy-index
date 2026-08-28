@@ -147,6 +147,11 @@ ares_set_weight(syn, i, j, w)
 ares_get_weight(syn, i, j)
 ares_scale_weights(syn, factor)
 ares_propagate(pre, syn, post)   // só funciona entre AresLifGroup
+
+// conectividade esparsa (equivalente a S.connect(p=...) do Brian2):
+ares_connect_random(syn, p)              // poda pra ~p% das conexões, aleatório
+ares_disconnect_self(syn)                // zera a diagonal (sem auto-sinapse)
+var syn2 = ares_dense_synapses_random(pre_n, post_n, weight, p)  // cria já podada
 ```
 
 ### Exponenciais (corrente com decaimento entre spikes)
@@ -155,6 +160,10 @@ var syn = ares_exp_synapses(pre_n, post_n, weight, tau, dt)  // ou ExpSynapses(.
 ares_exp_set_weight(syn, i, j, w)
 ares_exp_current(syn, i, j)
 ares_exp_step(pre, syn, post)    // decai + propaga, só entre AresLifGroup
+
+ares_exp_connect_random(syn, p)
+ares_exp_disconnect_self(syn)
+var syn2 = ares_exp_synapses_random(pre_n, post_n, weight, tau, dt, p)
 ```
 
 ### Condutivas (a mais realista — `g * (e_rev - v)`)
@@ -165,6 +174,10 @@ ares_cond_get_weight(syn, i, j)
 ares_cond_step(syn, dt)              // decai a condutância entre spikes
 ares_cond_propagate(pre, syn, post)      // pre/post do tipo AresLifGroup
 ares_cond_propagate_hh(pre, syn, post)   // pre/post do tipo AresHhGroup
+
+ares_cond_connect_random(syn, p)
+ares_cond_disconnect_self(syn)
+var syn2 = ares_cond_synapses_random(pre_n, post_n, weight, tau, e_rev, p)
 ```
 
 **Cuidado com `ares_cond_step`.** `ares_cond_synapses` já cria a matriz
@@ -344,6 +357,35 @@ fn main() {
 }
 ```
 
+### Rede LIF esparsa (10% de conectividade, sem auto-sinapse)
+```aresy
+import "aresNeuro.ay"
+
+fn main() {
+    var n = 200
+    var g = ares_lif_group(n, -65.0, -70.0, -50.0, 10.0, 2.0, 0.1)
+
+    // so ~10% das n*n conexoes possiveis ficam ativas, sorteadas na hora
+    var syn = ares_dense_synapses_random(n, n, 1.5, 0.1)
+    ares_disconnect_self(syn)   // remove i->i, que ares_connect_random pode ter sorteado
+
+    var mon = ares_monitor(500, n)
+    var t = 0
+    while t < 500 {
+        if t < 10 {
+            ares_drive_all(g, 20.0)   // estimulo inicial pra disparar a rede
+        }
+        ares_lif_step(g)
+        ares_propagate(g, syn, g)
+        ares_monitor_step(mon, g)
+        t = t + 1
+    }
+
+    print(ares_lif_spike_count(g))
+    return 0
+}
+```
+
 ### Poisson + TimedArray
 ```aresy
 import "aresNeuro.ay"
@@ -373,9 +415,13 @@ fn main() {
 - Sinapses densas e exponenciais não têm variante `_hh` ainda (só a
   condutiva tem `ares_cond_propagate_hh`); conectar HH com essas duas
   exige adaptar a função na mão por enquanto.
-- Sem sinapses esparsas — todas as matrizes de peso são densas
-  (`pre_n × post_n`), então redes muito grandes gastam memória O(n²)
-  mesmo com poucas conexões reais.
+- `ares_connect_random`/`_hh` selecionam conexões aleatoriamente, mas a
+  matriz de peso continua sendo alocada cheia (`pre_n × post_n`) por
+  baixo dos panos — ainda é O(n²) em memória mesmo com poucas conexões
+  reais ativas, só a *dinâmica* fica esparsa, não o armazenamento. Pra
+  redes muito grandes com conectividade rala de verdade, isso ainda
+  desperdiça memória comparado a uma representação esparsa nativa (lista
+  de adjacência), que não existe aqui.
 - Sem plasticidade sináptica (STDP e afins).
 - HH só tem Euler explícito — sem um integrador implícito/adaptativo,
   `dt` pequeno é obrigatório pra estabilidade (ver seção acima).

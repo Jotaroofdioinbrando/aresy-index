@@ -692,6 +692,40 @@ fn ares_exp_current(s: AresExpSynapses, i: i64, j: i64) -> double {
     return s.g[i][j]
 }
 
+fn ares_exp_connect_random(s: AresExpSynapses, p: double) {
+    if p < 0.0 { throw "ares_exp_connect_random: p precisa ser >= 0" }
+    if p > 1.0 { throw "ares_exp_connect_random: p precisa ser <= 1" }
+    var limiar = p * 1000000.0
+    var i = 0
+    while i < s.pre_n {
+        var j = 0
+        while j < s.post_n {
+            var r = random(1000000)
+            if (r * 1.0) >= limiar {
+                s.w[i][j] = 0.0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn ares_exp_disconnect_self(s: AresExpSynapses) {
+    var i = 0
+    while i < s.pre_n {
+        if i < s.post_n {
+            s.w[i][i] = 0.0
+        }
+        i = i + 1
+    }
+}
+
+fn ares_exp_synapses_random(pre_n: i64, post_n: i64, weight: double, tau: double, dt: double, p: double) -> AresExpSynapses {
+    var s = ares_exp_synapses(pre_n, post_n, weight, tau, dt)
+    ares_exp_connect_random(s, p)
+    return s
+}
+
 // Sinapse baseada em corrente com decaimento exponencial (o modelo de
 // sinapse mais comum em neurociência computacional — cada disparo do
 // pré-sinaptico soma "peso" na corrente pos-sinaptica, que depois decai
@@ -769,6 +803,40 @@ fn ares_cond_get_weight(s: AresCondSynapses, i: i64, j: i64) -> double {
     if j < 0 { throw "ares_cond_get_weight: indice pos negativo" }
     if j >= s.post_n { throw "ares_cond_get_weight: indice pos fora dos limites" }
     return s.g[i][j]
+}
+
+fn ares_cond_connect_random(s: AresCondSynapses, p: double) {
+    if p < 0.0 { throw "ares_cond_connect_random: p precisa ser >= 0" }
+    if p > 1.0 { throw "ares_cond_connect_random: p precisa ser <= 1" }
+    var limiar = p * 1000000.0
+    var i = 0
+    while i < s.pre_n {
+        var j = 0
+        while j < s.post_n {
+            var r = random(1000000)
+            if (r * 1.0) >= limiar {
+                s.g[i][j] = 0.0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+fn ares_cond_disconnect_self(s: AresCondSynapses) {
+    var i = 0
+    while i < s.pre_n {
+        if i < s.post_n {
+            s.g[i][i] = 0.0
+        }
+        i = i + 1
+    }
+}
+
+fn ares_cond_synapses_random(pre_n: i64, post_n: i64, weight: double, tau: double, e_rev: double, p: double) -> AresCondSynapses {
+    var s = ares_cond_synapses(pre_n, post_n, weight, tau, e_rev)
+    ares_cond_connect_random(s, p)
+    return s
 }
 
 fn ares_cond_propagate(pre: AresLifGroup, syn: AresCondSynapses, post: AresLifGroup) {
@@ -888,6 +956,50 @@ fn ares_scale_weights(s: AresSynapses, factor: double) {
         }
         i = i + 1
     }
+}
+
+// Poda a matriz de peso pra uma fração aleatória das conexões (equivalente
+// ao 'S.connect(p=...)' do Brian2). As matrizes de peso continuam sendo
+// densas por baixo dos panos (pre_n x post_n, sem estrutura esparsa de
+// verdade) — isso só zera o peso das conexões "não sorteadas", então
+// ainda gasta memória O(n²), mas a dinâmica passa a valer só pra p% das
+// conexões possíveis.
+fn ares_connect_random(s: AresSynapses, p: double) {
+    if p < 0.0 { throw "ares_connect_random: p precisa ser >= 0" }
+    if p > 1.0 { throw "ares_connect_random: p precisa ser <= 1" }
+    var limiar = p * 1000000.0
+    var i = 0
+    while i < s.pre_n {
+        var j = 0
+        while j < s.post_n {
+            var r = random(1000000)
+            if (r * 1.0) >= limiar {
+                s.w[i][j] = 0.0
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+// Zera a diagonal (i == j) — comum em redes recorrentes, onde um
+// neurônio não deveria "se auto-excitar" via sinapse.
+fn ares_disconnect_self(s: AresSynapses) {
+    var i = 0
+    while i < s.pre_n {
+        if i < s.post_n {
+            s.w[i][i] = 0.0
+        }
+        i = i + 1
+    }
+}
+
+// Atalho: cria a sinapse já podada pra uma fração p das conexões, num
+// só passo (equivalente a 'Synapses(...); S.connect(p=...)' do Brian2).
+fn ares_dense_synapses_random(pre_n: i64, post_n: i64, weight: double, p: double) -> AresSynapses {
+    var s = ares_dense_synapses(pre_n, post_n, weight)
+    ares_connect_random(s, p)
+    return s
 }
 
 fn ares_propagate(pre: AresLifGroup, syn: AresSynapses, post: AresLifGroup) {
