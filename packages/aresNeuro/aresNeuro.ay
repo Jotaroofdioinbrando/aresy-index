@@ -999,8 +999,18 @@ fn ares_disconnect_self(s: AresSynapses) {
 // puramente cosmética: ares_connect_random só mexe na matriz de peso da
 // sinapse (s.w[i][j]), nunca em campo de neurônio, então já funciona
 // idêntico com AresLifGroup ou AresHhGroup dos dois lados. Existe só
-// pra quem escreve uma rede toda em HH e quer manter os nomes de
-// função consistentes com "_hh" no resto do código.
+// pra quem escreve uma rede toda em HH mas usa sinapse DENSA
+// (AresSynapses) e quer manter os nomes de função consistentes com
+// "_hh" no resto do código.
+//
+// IMPORTANTE: aresY não tem overload de função (mesmo nome não pode
+// ter duas assinaturas com tipos de parâmetro diferentes), então esse
+// alias fica travado em AresSynapses e não pode também aceitar
+// AresCondSynapses. Pra rede HH com sinapse CONDUTIVA (o caso mais
+// comum, usada com ares_cond_propagate_hh / ares_cond_step), use a
+// função dedicada ares_cond_connect_random(syn, p) — já existe, já
+// funciona certo (poda s.g, não s.w) e não colide de nome com esta
+// aqui. As duas convivem sem quebrar uma à outra.
 fn ares_connect_random_hh(s: AresSynapses, p: double) {
     ares_connect_random(s, p)
 }
